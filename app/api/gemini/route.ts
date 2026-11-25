@@ -1,45 +1,60 @@
-import { GoogleGenAI } from '@google/genai';
-import { NextResponse } from 'next/server';
+import { GoogleGenAI } from "@google/genai";
+import { NextResponse } from "next/server";
+
+export async function GET() {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const list = await ai.models.list();
+  const names = [];
+  for await (const m of list) {
+    names.push(m.name);
+  }
+  return NextResponse.json({ availableModels: names });
+}
+
+type Message = {
+  role: "user" | "model";
+  text: string;
+};
 
 export async function POST(request: Request) {
-    // APIキーが読み込めていないときは、Geminiに問い合わせる前に知らせる
-    if (!process.env.GEMINI_API_KEY) {
-        return NextResponse.json(
-            { error: 'GEMINI_API_KEYが設定されていません。.env.localを確認し、npm run devを再起動してください' },
-            { status: 500 }
-        );
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEYが設定されていません" },
+        { status: 500 }
+      );
     }
 
-    try {
-        const { prompt } = await request.json();
+    const { messages } = (await request.json()) as { messages: Message[] };
 
-        const ai = new GoogleGenAI({
-            apiKey: process.env.GEMINI_API_KEY,
-        });
-
-        // モデル一覧
-        // https://aistudio.google.com/docs/models
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
-            contents: prompt,
-        });
-
-        return NextResponse.json({
-            answer: response.text,
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        let detail = message;
-        try {
-            // Geminiのサーバーから返ったエラーはJSON形式なので、codeとmessageを取り出す
-            const data = JSON.parse(message).error;
-            detail = `code(${data?.code}) message(${data?.message})`;
-        } catch {
-            // JSONでないエラー（通信エラーなど）は、そのまま表示する
-        }
-        return NextResponse.json(
-            { error: `Gemini APIの呼び出しに失敗しました ${detail.substring(0, 160)}...` },
-            { status: 500 }
-        );
+    if (!messages || messages.length === 0) {
+      return NextResponse.json(
+        { error: "メッセージが空です" },
+        { status: 400 }
+      );
     }
+
+    // Gemini APIが求める履歴形式（role と parts）に変換する
+    const contents = messages.map((msg) => ({
+      role: msg.role,
+      parts: [{ text: msg.text }],
+    }));
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents,
+    });
+
+    return NextResponse.json({ answer: response.text });
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "不明なエラーが発生しました";
+    return NextResponse.json(
+      { error: `Gemini APIの呼び出しに失敗しました: ${errorMessage}` },
+      { status: 500 }
+    );
+  }
 }
